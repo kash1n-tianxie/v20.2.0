@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>深渊讨伐 - 献祭战术版 (v3)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* --- 核心基础 --- */
+        body { 
+            background-color: #020617; color: #e2e8f0; 
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            height: 100vh; width: 100vw; overflow: hidden;
+            display: flex; flex-direction: column; user-select: none;
+        }
+
+        /* --- 区域布局 --- */
+        #area-boss { flex: 0 0 25%; position: relative; border-bottom: 1px solid #334155; background: #0f172a; z-index: 10; }
+        #area-heroes { flex: 1; overflow-y: auto; background: #020617; padding: 6px; position: relative; z-index: 5; padding-bottom: 80px; }
+        #area-footer { height: auto; background: #0f172a; border-top: 1px solid #334155; padding: 12px; z-index: 20; position: relative; box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.5); }
+
+        /* --- 动效 --- */
+        @keyframes shake { 0%, 100% { transform: translate(0, 0); } 20% { transform: translate(-4px, 2px); } 40% { transform: translate(4px, -2px); } 60% { transform: translate(-4px, -2px); } 80% { transform: translate(4px, 2px); } }
+        @keyframes damage-pop { 0% { opacity: 1; transform: translateY(0) scale(1); } 100% { opacity: 0; transform: translateY(-60px) scale(1.5); } }
+        @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); border-color: #ef4444; } 100% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); border-color: #ef4444; } }
+        @keyframes target-bounce { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.2); } }
+
+        .shaking { animation: shake 0.3s cubic-bezier(.36,.07,.19,.97) both; }
+        .locked-on { animation: pulse-red 1.5s infinite !important; border: 2px solid #ef4444 !important; position: relative; z-index: 10; }
+        .locked-on::after { content: "🎯"; position: absolute; top: -10px; right: -10px; font-size: 20px; background: #000; border-radius: 50%; width: 28px; height: 28px; display: flex; justify-content: center; align-items: center; border: 2px solid #ef4444; animation: target-bounce 1s infinite; z-index: 20; box-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+
+        /* --- Boss 区域 --- */
+        .boss-frame { height: 100%; display: flex; flex-direction: column; justify-content: center; padding: 0 24px; background: radial-gradient(circle at 50% 120%, #4c1d95 0%, #0f172a 70%); }
+        
+        /* --- 英雄卡片 --- */
+        .hero-card { background: #111827; border: 1px solid #374151; border-radius: 6px; margin-bottom: 8px; padding: 8px; transition: all 0.2s; position: relative; }
+        .hero-card.dead { filter: grayscale(1) brightness(0.4); border-color: #4b5563; opacity: 0.7; pointer-events: none; }
+        .hero-card.dead::after { content: "DEAD"; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-10deg); font-size: 30px; font-weight: 900; color: #ef4444; border: 4px solid #ef4444; padding: 5px 10px; border-radius: 8px; opacity: 0.8; z-index: 50; }
+        
+        /* 技能按钮 */
+        .skill-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 6px; }
+        .s-btn { background: #1f2937; border: 1px solid #4b5563; border-radius: 4px; color: #94a3b8; height: 48px; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: all 0.1s; }
+        .s-btn:active { transform: scale(0.95); }
+        .s-btn.selected { background: #451a03; border-color: #f59e0b; color: #f59e0b; box-shadow: inset 0 0 0 1px #f59e0b; }
+        .s-btn:disabled { opacity: 0.2; filter: grayscale(1); cursor: not-allowed; }
+        .s-cost { position: absolute; top: 1px; right: 2px; font-size: 10px; font-weight: bold; color: #f59e0b; }
+        .s-name { font-size: 11px; font-weight: bold; line-height: 1.2; }
+        .s-desc { font-size: 9px; transform: scale(0.85); color: #64748b; margin-top: 1px; }
+
+        /* 职业配色 */
+        .role-tank .s-btn.selected { background: #450a0a; border-color: #ef4444; color: #ef4444; }
+        .role-healer .s-btn.selected { background: #064e3b; border-color: #10b981; color: #10b981; }
+        .role-mage .s-btn.selected { background: #172554; border-color: #3b82f6; color: #3b82f6; }
+
+        /* HP 条 */
+        .hp-track { height: 12px; background: #000; border-radius: 2px; position: relative; margin-top: 4px; border: 1px solid #334155; }
+        .hp-fill { height: 100%; transition: width 0.3s ease-out; }
+        .hp-shield { position: absolute; top:0; left:0; height:100%; background: repeating-linear-gradient(45deg, rgba(255,255,255,0.2), rgba(255,255,255,0.2) 4px, transparent 4px, transparent 8px); border-right: 1px solid white; z-index: 2; transition: width 0.3s; }
+        .hp-text { position: absolute; width: 100%; text-align: center; top:-1px; font-size: 9px; color: #fff; text-shadow: 1px 1px 0 #000; z-index: 5; }
+
+        /* 飘字 */
+        .float-text { position: absolute; font-size: 24px; font-weight: 900; text-shadow: 2px 2px 0 #000; pointer-events: none; z-index: 50; animation: damage-pop 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        .dmg { color: #ef4444; } .heal { color: #10b981; } .shield { color: #cbd5e1; }
+
+        /* AP 点 */
+        .ap-box { display: flex; gap: 2px; }
+        .dot { width: 6px; height: 6px; border-radius: 50%; background: #334155; }
+        .dot.active { background: #f59e0b; box-shadow: 0 0 4px #f59e0b; }
+
+        /* 弹窗与日志 */
+        .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 100; display: flex; justify-content: center; align-items: center; padding: 20px; }
+        .hidden { display: none !important; }
+        .modal-box { background: #1e293b; border: 1px solid #4b5563; padding: 24px; max-width: 400px; width: 100%; border-radius: 8px; }
+        
+        .log-modal-content { background: #0f172a; border: 1px solid #334155; width: 90%; height: 70%; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); }
+        .log-body { flex: 1; overflow-y: auto; padding: 12px; font-family: monospace; font-size: 12px; color: #94a3b8; }
+        .log-turn { color: #fbbf24; border-bottom: 1px dashed #334155; margin: 8px 0 4px 0; font-weight: bold; }
+        .log-entry { margin-bottom: 4px; line-height: 1.5; }
+        
+        .control-row { display: flex; gap: 10px; width: 100%; }
+        .exec-btn { flex: 1; background: linear-gradient(180deg, #d97706, #b45309); color: white; font-weight: bold; padding: 14px; border-radius: 8px; font-size: 18px; box-shadow: 0 4px 0 #78350f; transition: all 0.1s; }
+        .exec-btn:active { transform: translateY(2px); box-shadow: 0 2px 0 #78350f; }
+        .exec-btn:disabled { background: #334155; color: #64748b; box-shadow: none; cursor: not-allowed; }
+        .log-btn { width: 60px; background: #334155; color: #e2e8f0; font-size: 24px; border-radius: 8px; border: 1px solid #475569; box-shadow: 0 4px 0 #1e293b; transition: all 0.1s; }
+        .log-btn:active { transform: translateY(2px); box-shadow: 0 2px 0 #1e293b; }
+
+        #turn-mask { position: absolute; inset: 0; background: rgba(0,0,0,0.2); z-index: 50; cursor: not-allowed; display: none; }
+        #turn-mask.active { display: block; }
+    </style>
+</head>
+<body>
+
+<!-- 规则说明 -->
+<div id="intro-modal" class="modal">
+    <div class="modal-box space-y-4 text-sm">
+        <h2 class="text-xl font-bold text-red-500 text-center border-b border-gray-700 pb-2">深渊讨伐 (献祭战术版)</h2>
+        <div class="space-y-2 text-gray-300">
+            <p>💀 <b>Boss HP: 3000</b></p>
+            <p>🎲 <b>变数:</b> 
+               <br>- 第一回合 Boss 会<b>随机攻击</b>。
+               <br>- Tank 开启嘲讽后，可强制吸收单体攻击并减伤 70%。
+            </p>
+            <p>⚔️ <b>调整:</b>
+               <br>- Tank HP 提升至 450。
+               <br>- Healer 输血: 先治疗目标，再扣自己血（可极限救人）。
+            </p>
+            <p>🚫 <b>规则:</b> 血量归零立即死亡，无法被治疗。</p>
+        </div>
+        <button onclick="startGame()" class="w-full bg-blue-700 hover:bg-blue-600 text-white font-bold py-3 rounded mt-2">开始战斗</button>
+    </div>
+</div>
+
+<!-- 1. Boss 区域 -->
+<div id="area-boss">
+    <div class="boss-frame">
+        <div class="flex justify-between items-end mb-2">
+            <div>
+                <div class="text-xs text-purple-400">ROUND <span id="round-num">1</span></div>
+                <h1 class="text-3xl font-black text-white tracking-widest flex items-center gap-2">👹 ABYSS</h1>
+            </div>
+            <div class="text-4xl font-bold text-red-500" id="boss-hp-val">3200</div>
+        </div>
+        <div class="hp-track" style="height: 16px;">
+            <div class="hp-fill bg-purple-700" id="boss-hp-bar" style="width: 100%;"></div>
+        </div>
+        <div class="mt-3 flex justify-between items-center text-xs bg-black/40 p-2 rounded border border-white/10">
+            <span class="text-gray-400 uppercase tracking-wide">Next Action</span>
+            <span class="font-bold text-yellow-400 animate-pulse" id="boss-intent">读取中...</span>
+        </div>
+        <div id="anchor-boss" style="position:absolute; left:50%; top:50%;"></div>
+    </div>
+</div>
+
+<!-- 2. 英雄区域 -->
+<div id="area-heroes">
+    <!-- Tank -->
+    <div class="hero-card role-tank border-l-2 border-red-500" id="card-tank">
+        <div class="flex justify-between mb-1">
+            <div class="text-xs font-bold text-red-400">🛡️ TANK (450 HP)</div>
+            <div class="ap-box" id="ap-tank"></div>
+        </div>
+        <div class="hp-track">
+            <div class="hp-fill bg-red-600" id="hp-tank" style="width: 100%;"></div>
+            <div class="hp-shield" id="shield-tank" style="width: 0%;"></div>
+            <div class="hp-text" id="text-tank">450/450</div>
+        </div>
+        <div class="skill-grid">
+            <button class="s-btn" id="btn-tank-s1" onclick="sel('tank','s1')">
+                <span class="s-cost">1</span><span class="s-name">盾击</span><span class="s-desc">20伤/30盾</span>
+            </button>
+            <button class="s-btn" id="btn-tank-s2" onclick="sel('tank','s2')">
+                <span class="s-cost">2</span><span class="s-name">嘲讽</span><span class="s-desc">70%减伤</span>
+            </button>
+            <button class="s-btn" id="btn-tank-s3" onclick="sel('tank','s3')" style="border-color:#b91c1c; background:#2a0a0a;">
+                <span class="s-cost text-red-500">0</span><span class="s-name text-red-500">自爆</span><span class="s-desc" id="desc-suicide">15%斩杀</span>
+            </button>
+            <button class="s-btn" id="btn-tank-wait" onclick="sel('tank','wait')">
+                <span class="s-name">待机</span><span class="s-desc">存AP</span>
+            </button>
+        </div>
+        <div id="anchor-tank" style="position:absolute; left:50%; top:30%;"></div>
+    </div>
+
+    <!-- Healer -->
+    <div class="hero-card role-healer border-l-2 border-green-500" id="card-healer">
+        <div class="flex justify-between mb-1">
+            <div class="text-xs font-bold text-green-400">⚕️ HEALER (250 HP)</div>
+            <div class="ap-box" id="ap-healer"></div>
+        </div>
+        <div class="hp-track">
+            <div class="hp-fill bg-green-600" id="hp-healer" style="width: 100%;"></div>
+            <div class="hp-shield" id="shield-healer" style="width: 0%;"></div>
+            <div class="hp-text" id="text-healer">250/250</div>
+        </div>
+        <div class="skill-grid">
+            <button class="s-btn" id="btn-healer-s1" onclick="sel('healer','s1')">
+                <span class="s-cost">1</span><span class="s-name">治疗</span><span class="s-desc">单体60</span>
+            </button>
+            <button class="s-btn" id="btn-healer-s2" onclick="sel('healer','s2')">
+                <span class="s-cost">2</span><span class="s-name">祈祷</span><span class="s-desc">全体40</span>
+            </button>
+            <button class="s-btn" id="btn-healer-s3" onclick="sel('healer','s3')" style="border-color:#15803d; background:#022c22;">
+                <span class="s-cost text-green-400">0</span><span class="s-name text-green-400">输血</span><span class="s-desc">治150/自伤60</span>
+            </button>
+            <button class="s-btn" id="btn-healer-wait" onclick="sel('healer','wait')">
+                <span class="s-name">待机</span><span class="s-desc">存AP</span>
+            </button>
+        </div>
+        <div id="anchor-healer" style="position:absolute; left:50%; top:30%;"></div>
+    </div>
+
+    <!-- Mage -->
+    <div class="hero-card role-mage border-l-2 border-blue-500" id="card-mage">
+        <div class="flex justify-between mb-1">
+            <div class="text-xs font-bold text-blue-400">🔥 MAGE (200 HP)</div>
+            <div class="ap-box" id="ap-mage"></div>
+        </div>
+        <div class="hp-track">
+            <div class="hp-fill bg-blue-600" id="hp-mage" style="width: 100%;"></div>
+            <div class="hp-shield" id="shield-mage" style="width: 0%;"></div>
+            <div class="hp-text" id="text-mage">200/200</div>
+        </div>
+        <div class="skill-grid">
+            <button class="s-btn" id="btn-mage-s1" onclick="sel('mage','s1')">
+                <span class="s-cost">1</span><span class="s-name">飞弹</span><span class="s-desc">60伤</span>
+            </button>
+            <button class="s-btn" id="btn-mage-s2" onclick="sel('mage','s2')" style="border-color:#1d4ed8; background:#1e1b4b;">
+                <span class="s-cost text-blue-400">2</span><span class="s-name text-blue-300">火球</span><span class="s-desc">150伤</span>
+            </button>
+            <button class="s-btn" id="btn-mage-s3" onclick="sel('mage','s3')" style="border-color:#1d4ed8; background:#1e1b4b;">
+                <span class="s-cost text-blue-400">3</span><span class="s-name text-blue-300">燃魂</span><span class="s-desc">250伤/自伤40</span>
+            </button>
+            <button class="s-btn" id="btn-mage-wait" onclick="sel('mage','wait')">
+                <span class="s-name">待机</span><span class="s-desc">存AP</span>
+            </button>
+        </div>
+        <div id="anchor-mage" style="position:absolute; left:50%; top:30%;"></div>
+    </div>
+</div>
+
+<!-- 3. 底部控制 -->
+<div id="area-footer">
+    <div id="turn-mask"></div>
+    <div class="control-row">
+        <button onclick="showLogs()" class="log-btn">📜</button>
+        <button id="commit-btn" onclick="executeTurn()" class="exec-btn" disabled>等待指令 (0/3)</button>
+    </div>
+</div>
+
+<!-- 战报弹窗 -->
+<div id="log-modal" class="modal hidden">
+    <div class="log-modal-content">
+        <div class="log-header">
+            <h3 class="text-white font-bold">战斗记录</h3>
+            <button onclick="closeLogs()" class="text-gray-400 text-xl px-2">&times;</button>
+        </div>
+        <div id="log-body" class="log-body">
+            <div class="text-center mt-4 opacity-50">-- 记录开始 --</div>
+        </div>
+        <div class="p-3 bg-gray-900 border-t border-gray-700">
+            <button onclick="closeLogs()" class="w-full bg-gray-700 hover:bg-gray-600 text-white py-3 rounded font-bold">返回战斗</button>
+        </div>
+    </div>
+</div>
+
+<!-- 目标选择浮层 -->
+<div id="target-overlay" class="modal hidden">
+    <div class="bg-gray-800 p-4 rounded w-64 border border-green-600 shadow-2xl">
+        <h3 class="text-green-400 font-bold mb-3 text-center">选择治疗目标</h3>
+        <div class="space-y-2">
+            <button onclick="confirmTarget('tank')" class="w-full p-3 bg-gray-700 hover:bg-gray-600 rounded flex justify-between border-l-4 border-red-500">
+                <span>🛡️ Tank</span> <span class="text-xs bg-black px-2 rounded" id="tg-hp-tank"></span>
+            </button>
+            <button onclick="confirmTarget('healer')" class="w-full p-3 bg-gray-700 hover:bg-gray-600 rounded flex justify-between border-l-4 border-green-500 cursor-not-allowed opacity-50" disabled>
+                <span>⚕️ Healer</span> <span class="text-xs bg-black px-2 rounded" id="tg-hp-healer"></span>
+            </button>
+            <button onclick="confirmTarget('mage')" class="w-full p-3 bg-gray-700 hover:bg-gray-600 rounded flex justify-between border-l-4 border-blue-500">
+                <span>🔥 Mage</span> <span class="text-xs bg-black px-2 rounded" id="tg-hp-mage"></span>
+            </button>
+        </div>
+        <button onclick="closeTarget()" class="mt-4 text-center w-full text-xs text-gray-500 underline">取消</button>
+    </div>
+</div>
+
+<!-- 结果弹窗 -->
+<div id="result-modal" class="modal hidden">
+    <div class="modal-box text-center">
+        <div id="res-icon" class="text-6xl mb-4"></div>
+        <h2 id="res-title" class="text-2xl font-bold mb-2"></h2>
+        <p id="res-msg" class="text-gray-400 mb-6 font-mono text-xs"></p>
+        <button onclick="startGame()" class="w-full bg-white text-black font-bold py-3 rounded">重置战斗</button>
+    </div>
+</div>
+
+<script>
+// --- 配置 ---
+const CONFIG = {
+    boss: { hp: 3000 },
+    tank: { hp: 450 },
+    healer: { hp: 250 },
+    mage: { hp: 200 }
+};
+
+const SKILLS = {
+    tank: {
+        s1: { name: "Shield Bash", cost: 1, type: "def" }, // 20伤 30盾
+        s2: { name: "Taunt", cost: 2, type: "buff" },
+        s3: { name: "Self Destruct", cost: 0, type: "suicide" },
+        wait: { name: "Wait", cost: 0, type: "wait" }
+    },
+    healer: {
+        s1: { name: "Heal", cost: 1, type: "heal", needTarget: true }, // 60 HP
+        s2: { name: "Pray", cost: 2, type: "aoe" }, // 40 HP AOE
+        s3: { name: "Transfuse", cost: 0, type: "sac_lite", needTarget: true }, // 治150 自伤60 (Target != Self)
+        wait: { name: "Wait", cost: 0, type: "wait" }
+    },
+    mage: {
+        s1: { name: "Missile", cost: 1, type: "atk" }, // 60
+        s2: { name: "Fireball", cost: 2, type: "atk" }, // 150
+        s3: { name: "Soul Burn", cost: 3, type: "burn" }, // 250 / 40
+        wait: { name: "Wait", cost: 0, type: "wait" }
+    }
+};
+
+let state = { round: 1, boss: {hp:0}, chars: {}, actions: {}, pendingSkill: null, isAnimating: false, lockedTarget: null };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// --- 游戏循环 ---
+function startGame() {
+    document.querySelectorAll('.modal').forEach(e => e.classList.add('hidden'));
+    state.round = 1;
+    state.boss = { hp: 3000, maxHp: 3000 };
+    state.lockedTarget = null;
+    ['tank','healer','mage'].forEach(r => {
+        state.chars[r] = {
+            ...CONFIG[r], hp: CONFIG[r].hp, ap: 3, shield: 0, isTaunting: false, dead: false
+        };
+    });
+    state.actions = { tank: null, healer: null, mage: null };
+    document.getElementById('log-body').innerHTML = '<div class="text-center mt-4 opacity-50">-- 记录开始 --</div>';
+    document.getElementById('turn-mask').classList.remove('active');
+    updateUI();
+}
+
+// --- 交互逻辑 ---
+function sel(role, skillId) {
+    if (state.chars[role].dead || state.isAnimating) return;
+    
+    // 目标选择
+    if (SKILLS[role][skillId].needTarget) {
+        state.pendingSkill = skillId;
+        openTarget();
+        return;
+    }
+    
+    // AP 检查
+    if (state.chars[role].ap < SKILLS[role][skillId].cost) {
+        shakeCard(role); return;
+    }
+
+    state.actions[role] = { skill: skillId, target: null };
+    updateUI();
+}
+
+function openTarget() {
+    // Update HP in modal
+    ['tank','healer','mage'].forEach(r => {
+        const c = state.chars[r];
+        const el = document.getElementById(`tg-hp-${r}`);
+        if(el) el.innerText = `${c.hp}`;
+    });
+
+    // Disable Healer button if skill is Transfuse (s3)
+    const btns = document.querySelectorAll('#target-overlay button[onclick*="confirmTarget"]');
+    if (state.pendingSkill === 's3') {
+        btns[1].disabled = true; // Healer is index 1
+        btns[1].classList.add('opacity-50', 'cursor-not-allowed');
+    } else {
+        btns[1].disabled = false;
+        btns[1].classList.remove('opacity-50', 'cursor-not-allowed');
+    }
+
+    document.getElementById('target-overlay').classList.remove('hidden');
+}
+function closeTarget() { document.getElementById('target-overlay').classList.add('hidden'); }
+function confirmTarget(t) {
+    if(state.chars[t].dead) return;
+    state.actions['healer'] = { skill: state.pendingSkill, target: t };
+    closeTarget();
+    updateUI();
+}
+
+function flashCard(role) {
+    const el = document.getElementById(`card-${role}`);
+    el.style.borderColor = 'red';
+    setTimeout(() => el.style.borderColor = '', 200);
+}
+
+function shakeCard(role) {
+    const el = document.getElementById(`card-${role}`);
+    el.classList.add('shaking');
+    setTimeout(() => el.classList.remove('shaking'), 300);
+}
+
+// --- 战斗核心 (Async) ---
+async function executeTurn() {
+    const btn = document.getElementById('commit-btn');
+    btn.disabled = true;
+    btn.innerText = "执行中...";
+    
+    log(`--- Round ${state.round} ---`, 'turn');
+    
+    // 清除状态
+    ['tank', 'healer', 'mage'].forEach(r => state.chars[r].isTaunting = false);
+
+    // 顺序: Tank -> Mage -> Boss -> Healer
+    const order = ['tank', 'mage', 'boss', 'healer'];
+
+    for (const step of order) {
+        if (step === 'boss') {
+            if (state.boss.hp > 0) await processBoss();
+            if (['tank','healer','mage'].every(r => state.chars[r].dead)) {
+                 endGame(false); return;
+            }
+            continue;
+        }
+
+        const role = step;
+        const char = state.chars[role];
+        const act = state.actions[role];
+        if (!act || char.dead || act.skill === 'dead') continue;
+        
+        if (act.skill === 'wait') {
+            log(`${role}: 待机`); continue;
+        }
+
+        const skill = SKILLS[role][act.skill];
+        char.ap -= skill.cost;
+        updateUI(); // 立即扣除AP
+
+        // 技能逻辑
+        if (skill.type === 'suicide') {
+            const dmg = Math.floor((3000 - state.boss.hp) * 0.15);
+            log(`Tank: <span class="text-red-500">自爆!</span> (伤${dmg})`);
+            await animateDamage('boss', dmg);
+            char.hp = 0;
+            checkDeaths();
+        }
+        else if (skill.type === 'def') {
+            log(`Tank: 盾击 (20伤/30盾)`);
+            await animateDamage('boss', 20);
+            char.shield += 30;
+            updateUI();
+        }
+        else if (skill.type === 'buff') {
+            char.isTaunting = true;
+            log(`Tank: <span class="text-yellow-400">嘲讽开启</span>`);
+            await sleep(300);
+        }
+        else if (skill.type === 'atk') {
+            const val = act.skill === 's1' ? 60 : 150;
+            log(`${role}: 攻击 (伤${val})`);
+            await animateDamage('boss', val);
+        }
+        else if (skill.type === 'burn') {
+            log(`Mage: <span class="text-red-400">燃魂</span> (伤250/自伤40)`);
+            await animateDamage('boss', 250);
+            await animateDamage('mage', 40);
+        }
+        else if (skill.type === 'heal' || skill.type === 'sac_lite') {
+            const val = skill.type === 'sac_lite' ? 150 : 60;
+            const cost = skill.type === 'sac_lite' ? 60 : 0;
+            log(`Healer: 治疗 -> ${act.target} (+${val})`);
+            await animateHeal(act.target, val);
+            if (cost > 0) {
+                log(`Healer: 输血代价 (${cost})`);
+                await animateDamage('healer', cost);
+            }
+        }
+        else if (skill.type === 'aoe') {
+            log(`Healer: 祈祷 (群+40)`);
+            await Promise.all(['tank','healer','mage'].map(r => animateHeal(r, 40)));
+        }
+        
+        checkDeaths();
+        updateUI();
+        if (state.boss.hp <= 0) break;
+        await sleep(200);
+    }
+
+    // 回合结算
+    ['tank', 'healer', 'mage'].forEach(r => {
+        if (!state.chars[r].dead) {
+            state.chars[r].ap = Math.min(3, state.chars[r].ap + 1); // +1 AP
+            state.chars[r].shield = 0; // 盾消失
+        }
+    });
+
+    state.round++;
+    state.actions = { tank: null, healer: null, mage: null };
+    updateUI();
+    
+    // 胜负判定
+    if (state.boss.hp <= 0) showResult(true);
+    else if (['tank','healer','mage'].every(r => state.chars[r].dead)) showResult(false);
+}
+
+async function processBoss() {
+    await sleep(400);
+    const cycle = state.round % 4;
+    const alive = ['tank','healer','mage'].filter(r => !state.chars[r].dead);
+    if(alive.length === 0) return;
+
+    const taunter = alive.find(r => state.chars[r].isTaunting);
+    // 凝视目标: 血量最低
+    const weakest = [...alive].sort((a,b) => state.chars[a].hp - state.chars[b].hp)[0];
+
+    if (cycle === 1) { // Crush 60 (Random Target)
+        // Random from alive
+        let t = alive[Math.floor(Math.random() * alive.length)];
+        let dmg = 60;
+        
+        // Taunt Logic Update
+        if (taunter) {
+            t = 'tank';
+            dmg = Math.floor(dmg * 0.3); // 70% reduction if taunting
+            log(`Boss: 碎骨 -> ${t} (嘲讽减伤! ${dmg})`, 'text-yellow-500');
+        } else {
+             log(`Boss: 随机碎骨 -> ${t} (60)`, 'text-red-400');
+        }
+        
+        await animateDamage(t, dmg);
+    } 
+    else if (cycle === 2) { // Sweep 40
+        log(`Boss: 横扫 -> 全体 (40)`, 'text-red-400');
+        await Promise.all(alive.map(r => animateDamage(r, 40)));
+    } 
+    else if (cycle === 3) { // Telegraph
+        state.lockedTarget = weakest; // Lock target
+        log(`Boss: <span class="animate-pulse">凝视 ${weakest.toUpperCase()}...</span>`);
+        updateUI(); 
+        await sleep(1000);
+    } 
+    else { // Execute 999
+        let t = state.lockedTarget && !state.chars[state.lockedTarget].dead ? state.lockedTarget : weakest;
+        if (taunter) t = 'tank'; // Taunt overrides lock
+        
+        state.lockedTarget = null; // Clear lock
+        updateUI();
+
+        let dmg = 999;
+        if (state.chars[t].isTaunting) {
+            dmg = Math.floor(dmg * 0.3); // ~300
+            log(`Boss: 处决 -> ${t} (格挡! 伤${dmg})`, 'text-yellow-500');
+        } else {
+            log(`Boss: 处决 -> ${t} (致命! 伤${dmg})`, 'text-red-600');
+        }
+        await animateDamage(t, dmg, true);
+    }
+}
+
+// --- 动画系统 ---
+async function animateDamage(target, amount, isTrue = false) {
+    const isBoss = target === 'boss';
+    const char = isBoss ? state.boss : state.chars[target];
+    if (char.dead) return;
+
+    let final = amount;
+    if (!isBoss && !isTrue && char.shield > 0) {
+        const absorb = Math.min(char.shield, final);
+        char.shield -= absorb;
+        final -= absorb;
+    }
+    char.hp = Math.max(0, char.hp - final);
+    
+    // 即死判定：伤害结算后立即检查
+    checkDeaths(); 
+    updateUI();
+    
+    const el = document.getElementById(isBoss ? 'area-boss' : `card-${target}`);
+    el.classList.add('shaking');
+    showFloat(target, `-${final}`, 'dmg');
+    await sleep(300);
+    el.classList.remove('shaking');
+}
+
+async function animateHeal(target, amount) {
+    // 严格治疗限制：死人不能被奶，0血不能被奶
+    if (state.chars[target].dead || state.chars[target].hp <= 0) {
+        log(`${target} 已死亡，无法治疗`, 'text-gray-500');
+        return;
+    }
+    const max = CONFIG[target].hp;
+    state.chars[target].hp = Math.min(max, state.chars[target].hp + amount);
+    updateUI();
+    showFloat(target, `+${amount}`, 'heal');
+    await sleep(200);
+}
+
+function showFloat(target, text, type) {
+    const el = document.createElement('div');
+    el.className = `float-text ${type}`;
+    el.innerText = text;
+    const anchor = target === 'boss' ? 'anchor-boss' : `anchor-${target}`;
+    document.getElementById(anchor).appendChild(el);
+    setTimeout(() => el.remove(), 800);
+}
+
+function checkDeaths() {
+    ['tank','healer','mage'].forEach(r => {
+        // 如果血量<=0 且 状态未标记为死，则标记为死
+        if(state.chars[r].hp <= 0 && !state.chars[r].dead) {
+            state.chars[r].dead = true;
+            state.chars[r].hp = 0; // 确保不为负
+            log(`${r} 阵亡!`, 'text-gray-500');
+            updateUI(); // 立即变灰
+        }
+    });
+}
+
+function log(msg, cls='') {
+    const d = document.createElement('div');
+    d.innerHTML = msg;
+    d.className = `log-entry ${cls}`;
+    const box = document.getElementById('log-body');
+    box.appendChild(d);
+    box.scrollTop = box.scrollHeight;
+}
+
+function updateUI() {
+    // Boss
+    const bPct = (state.boss.hp / 3000) * 100;
+    document.getElementById('boss-hp-bar').style.width = `${bPct}%`;
+    document.getElementById('boss-hp-val').innerText = state.boss.hp;
+    const intents = { 1: "随机 (60)", 2: "横扫 (40)", 3: "⚠️ 凝视", 0: "☠️ 处决 (999)" };
+    document.getElementById('boss-intent').innerText = intents[state.round % 4];
+    document.getElementById('round-num').innerText = state.round;
+
+    // Heroes
+    let readyCount = 0;
+    ['tank','healer','mage'].forEach(role => {
+        const c = state.chars[role];
+        const el = document.getElementById(`card-${role}`);
+        
+        if(c.dead) {
+            el.classList.add('dead');
+            readyCount++;
+        } else {
+            el.classList.remove('dead');
+        }
+        
+        // 锁定状态可视化
+        if (state.lockedTarget === role && !c.dead) {
+            el.classList.add('locked-on');
+        } else {
+            el.classList.remove('locked-on');
+        }
+
+        // HP
+        document.getElementById(`hp-${role}`).style.width = `${(c.hp/CONFIG[role].hp)*100}%`;
+        
+        const shieldEl = document.getElementById(`shield-${role}`);
+        if (shieldEl) shieldEl.style.width = `${Math.min(100, (c.shield/CONFIG[role].hp)*100)}%`;
+        
+        document.getElementById(`text-${role}`).innerText = `${c.hp}/${CONFIG[role].hp} ${c.shield>0 ? '(+'+c.shield+')' : ''}`;
+
+        // AP
+        let dots = '';
+        for(let i=0; i<3; i++) dots += `<div class="dot ${i<c.ap ? 'active' : ''}"></div>`;
+        document.getElementById(`ap-${role}`).innerHTML = dots;
+
+        // Skill Btns
+        el.querySelectorAll('.s-btn').forEach(b => {
+            b.classList.remove('selected'); b.disabled = false;
+        });
+        
+        const act = state.actions[role];
+        if (act) {
+            const btn = document.getElementById(`btn-${role}-${act.skill}`) || document.getElementById(`btn-${role}-wait`);
+            btn?.classList.add('selected');
+            readyCount++;
+        }
+        
+        // Disable Check
+        Object.keys(SKILLS[role]).forEach(k => {
+            if (c.ap < SKILLS[role][k].cost) {
+                const btn = document.getElementById(`btn-${role}-${k}`);
+                if (btn) btn.disabled = true;
+            }
+        });
+        
+        if (role === 'tank') {
+            const val = Math.floor((3000 - state.boss.hp) * 0.15);
+            const elDesc = document.getElementById('desc-suicide');
+            if(elDesc) elDesc.innerText = `伤${val}`;
+        }
+    });
+
+    const btn = document.getElementById('commit-btn');
+    if (readyCount >= 3) {
+        btn.disabled = false;
+        btn.innerText = "执行回合";
+        btn.style.background = "";
+    } else {
+        btn.disabled = true;
+        btn.innerText = `等待指令 (${readyCount}/3)`;
+        btn.style.background = "#334155";
+    }
+}
+
+function showResult(win) {
+    const modal = document.getElementById('result-modal');
+    const title = document.getElementById('result-title');
+    const icon = document.getElementById('result-icon');
+    const msg = document.getElementById('result-msg');
+    
+    modal.classList.add('active');
+    if (win) {
+        icon.innerText = "🏆";
+        title.innerText = "讨伐成功!";
+        title.className = "text-2xl font-bold text-yellow-400 mb-2";
+        msg.innerText = `回合数: ${state.round}`;
+    } else {
+        icon.innerText = "💀";
+        title.innerText = "全员阵亡";
+        title.className = "text-2xl font-bold text-red-500 mb-2";
+        msg.innerText = `Boss 剩余: ${state.boss.hp}`;
+    }
+    
+    // Save stats
+    let stats = JSON.parse(localStorage.getItem('rpg_stats') || '{"wins":0, "total":0}');
+    stats.total++;
+    if (win) stats.wins++;
+    localStorage.setItem('rpg_stats', JSON.stringify(stats));
+}
+</script>
+</body>
+</html>
